@@ -3,10 +3,11 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
+import { Slider } from '@/components/ui/slider';
 
 type Team = 'CT' | 'T' | null;
-type GameState = 'menu' | 'playing' | 'dead';
-type WeaponType = 'rifle' | 'pistol' | 'knife';
+type GameState = 'menu' | 'teamSelect' | 'playing' | 'dead';
+type WeaponType = 'rifle' | 'pistol' | 'knife' | 'awp' | 'smg';
 
 interface Bot {
   id: number;
@@ -31,6 +32,7 @@ interface Player {
   team: Team;
   weapon: WeaponType;
   reserveAmmo: number;
+  money: number;
 }
 
 interface Weapon {
@@ -40,6 +42,7 @@ interface Weapon {
   ammo: number;
   maxAmmo: number;
   fireRate: number;
+  price: number;
 }
 
 interface CheatSettings {
@@ -49,10 +52,18 @@ interface CheatSettings {
   fly: boolean;
 }
 
+interface Settings {
+  graphicsQuality: number;
+  sensitivity: number;
+  fov: number;
+}
+
 const WEAPONS: Record<WeaponType, Weapon> = {
-  rifle: { type: 'rifle', name: 'AK-47', damage: 50, ammo: 30, maxAmmo: 30, fireRate: 100 },
-  pistol: { type: 'pistol', name: 'Desert Eagle', damage: 35, ammo: 7, maxAmmo: 7, fireRate: 300 },
-  knife: { type: 'knife', name: 'Нож', damage: 100, ammo: 999, maxAmmo: 999, fireRate: 500 },
+  rifle: { type: 'rifle', name: 'AK-47', damage: 50, ammo: 30, maxAmmo: 30, fireRate: 100, price: 2700 },
+  pistol: { type: 'pistol', name: 'Desert Eagle', damage: 35, ammo: 7, maxAmmo: 7, fireRate: 300, price: 700 },
+  knife: { type: 'knife', name: 'Нож', damage: 100, ammo: 999, maxAmmo: 999, fireRate: 500, price: 0 },
+  awp: { type: 'awp', name: 'AWP', damage: 100, ammo: 10, maxAmmo: 10, fireRate: 1500, price: 4750 },
+  smg: { type: 'smg', name: 'MP9', damage: 25, ammo: 30, maxAmmo: 30, fireRate: 80, price: 1250 },
 };
 
 const Index = () => {
@@ -67,8 +78,9 @@ const Index = () => {
     health: 100,
     ammo: 30,
     team: null,
-    weapon: 'rifle',
+    weapon: 'pistol',
     reserveAmmo: 90,
+    money: 800,
   });
   const [bots, setBots] = useState<Bot[]>([]);
   const [keys, setKeys] = useState<{ [key: string]: boolean }>({});
@@ -80,18 +92,25 @@ const Index = () => {
   const [weaponBob, setWeaponBob] = useState(0);
   const [reloading, setReloading] = useState(false);
   const [cheatMenuOpen, setCheatMenuOpen] = useState(false);
+  const [buyMenuOpen, setBuyMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [cheats, setCheats] = useState<CheatSettings>({
     aimbot: false,
     esp: false,
     speed: false,
     fly: false,
   });
+  const [settings, setSettings] = useState<Settings>({
+    graphicsQuality: 100,
+    sensitivity: 50,
+    fov: 90,
+  });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>();
   const [killCount, setKillCount] = useState(0);
 
   const playShootSound = () => {
-    const freq = player.weapon === 'rifle' ? 100 : player.weapon === 'pistol' ? 150 : 200;
+    const freq = player.weapon === 'rifle' ? 100 : player.weapon === 'pistol' ? 150 : player.weapon === 'awp' ? 80 : 120;
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -100,7 +119,7 @@ const Index = () => {
     oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.1);
     
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.setValueAtTime(player.weapon === 'awp' ? 0.5 : 0.3, audioContext.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
     
     oscillator.connect(gainNode);
@@ -142,7 +161,7 @@ const Index = () => {
         newBots.push({
           id: i,
           x: Math.random() * 40 - 20,
-          y: 0,
+          y: Math.random() > 0.5 ? 1.7 : 4.5,
           z: Math.random() * 40 - 20,
           rotation: Math.random() * Math.PI * 2,
           health: 100,
@@ -161,6 +180,11 @@ const Index = () => {
       
       if (e.shiftKey && e.location === 2) {
         setCheatMenuOpen((prev) => !prev);
+        return;
+      }
+
+      if (key === 'b' && gameState === 'playing') {
+        setBuyMenuOpen((prev) => !prev);
         return;
       }
 
@@ -214,7 +238,7 @@ const Index = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [inspecting, reloading, player.weapon, player.ammo, player.reserveAmmo]);
+  }, [inspecting, reloading, player.weapon, player.ammo, player.reserveAmmo, gameState]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -222,7 +246,8 @@ const Index = () => {
 
     const handleMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement === canvas) {
-        setMouseMovement({ x: e.movementX, y: e.movementY });
+        const sensitivity = settings.sensitivity / 50;
+        setMouseMovement({ x: e.movementX * sensitivity, y: e.movementY * sensitivity });
       }
     };
 
@@ -230,10 +255,10 @@ const Index = () => {
       if (document.pointerLockElement !== canvas) {
         canvas.requestPointerLock();
       } else {
-        if (player.ammo > 0 && !shooting && !inspecting && !reloading) {
+        if (player.ammo > 0 && !shooting && !inspecting && !reloading && !buyMenuOpen) {
           const currentWeapon = WEAPONS[player.weapon];
           setShooting(true);
-          setRecoil(player.weapon === 'rifle' ? 15 : player.weapon === 'pistol' ? 10 : 5);
+          setRecoil(player.weapon === 'rifle' ? 15 : player.weapon === 'pistol' ? 10 : player.weapon === 'awp' ? 30 : 5);
           playShootSound();
 
           if (player.weapon !== 'knife') {
@@ -248,6 +273,7 @@ const Index = () => {
               if (newBots[hitBotIndex].health <= 0) {
                 newBots[hitBotIndex].alive = false;
                 setKillCount((count) => count + 1);
+                setPlayer((p) => ({ ...p, money: p.money + 300 }));
               }
               return newBots;
             });
@@ -265,7 +291,7 @@ const Index = () => {
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('click', handleClick);
     };
-  }, [gameState, player.ammo, shooting, inspecting, reloading, player.weapon]);
+  }, [gameState, player.ammo, shooting, inspecting, reloading, player.weapon, settings.sensitivity, buyMenuOpen]);
 
   const checkBotHit = () => {
     const rayAngle = player.rotation;
@@ -279,7 +305,7 @@ const Index = () => {
       const dz = bots[i].z - player.z;
       const distance = Math.sqrt(dx * dx + dz * dz);
 
-      if (distance > 30) continue;
+      if (distance > 50) continue;
 
       const dotProduct = (dx * rayDirX + dz * rayDirZ) / distance;
       if (dotProduct > 0.98) {
@@ -370,8 +396,8 @@ const Index = () => {
           setWeaponBob((prev) => prev + 0.15);
         }
 
-        newX = Math.max(-25, Math.min(25, newX));
-        newZ = Math.max(-25, Math.min(25, newZ));
+        newX = Math.max(-30, Math.min(30, newX));
+        newZ = Math.max(-30, Math.min(30, newZ));
         newY = Math.max(0.5, Math.min(10, newY));
 
         return { ...prev, x: newX, y: newY, z: newZ, rotation: newRotation, pitch: newPitch };
@@ -448,89 +474,199 @@ const Index = () => {
     ctx.save();
 
     if (player.weapon === 'rifle') {
-      const baseX = width - 400 + inspectOffset;
-      const baseY = height - 200 + bobOffset + reloadOffset;
+      const baseX = width - 450 + inspectOffset;
+      const baseY = height - 220 + bobOffset + reloadOffset;
 
-      const gradient = ctx.createLinearGradient(baseX, baseY, baseX + 350, baseY + 40);
-      gradient.addColorStop(0, '#1A1F2C');
-      gradient.addColorStop(0.5, '#2C3E50');
-      gradient.addColorStop(1, '#34495E');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(baseX, baseY, 350, 40);
-
-      ctx.fillStyle = '#34495E';
+      const bodyGradient = ctx.createLinearGradient(baseX, baseY, baseX + 400, baseY + 50);
+      bodyGradient.addColorStop(0, '#0A0A0A');
+      bodyGradient.addColorStop(0.3, '#1A1F2C');
+      bodyGradient.addColorStop(0.7, '#2C3E50');
+      bodyGradient.addColorStop(1, '#1A1A1A');
+      ctx.fillStyle = bodyGradient;
       ctx.shadowColor = '#000';
-      ctx.shadowBlur = 10;
-      ctx.fillRect(baseX + 50, baseY - 20, 60, 60);
+      ctx.shadowBlur = 15;
+      ctx.fillRect(baseX, baseY, 400, 50);
       ctx.shadowBlur = 0;
 
+      ctx.fillStyle = '#0F1419';
+      ctx.fillRect(baseX + 60, baseY - 25, 70, 75);
+
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(baseX - 100, baseY + 8, 120, 35);
+      ctx.strokeStyle = '#654321';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(baseX - 100 + i * 25, baseY + 8);
+        ctx.lineTo(baseX - 100 + i * 25, baseY + 43);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#2C3E50';
+      ctx.fillRect(baseX + 120, baseY + 10, 35, 35);
+
+      const magGradient = ctx.createLinearGradient(baseX + 160, baseY + 50, baseX + 160, baseY + 120);
+      magGradient.addColorStop(0, '#1A1A1A');
+      magGradient.addColorStop(1, '#0A0A0A');
+      ctx.fillStyle = magGradient;
+      ctx.fillRect(baseX + 150, baseY + 50, 30, 70);
+
       ctx.fillStyle = '#F97316';
-      ctx.fillRect(baseX + 300, baseY + 10, 50, 20);
+      ctx.shadowColor = '#F97316';
+      ctx.shadowBlur = 10;
+      ctx.fillRect(baseX + 370, baseY + 15, 30, 20);
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = '#444';
+      ctx.beginPath();
+      ctx.arc(baseX + 130, baseY - 50, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#222';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      if (shooting) {
+        const muzzleGradient = ctx.createRadialGradient(baseX + 400, baseY + 25, 0, baseX + 400, baseY + 25, 50);
+        muzzleGradient.addColorStop(0, '#FFFFFF');
+        muzzleGradient.addColorStop(0.2, '#FFD700');
+        muzzleGradient.addColorStop(0.5, '#FFA500');
+        muzzleGradient.addColorStop(1, 'rgba(255, 69, 0, 0)');
+        ctx.fillStyle = muzzleGradient;
+        ctx.shadowColor = '#FFA500';
+        ctx.shadowBlur = 30;
+        ctx.beginPath();
+        ctx.arc(baseX + 400, baseY + 25, 50, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(baseX, baseY, 400, 50);
+    } else if (player.weapon === 'awp') {
+      const baseX = width - 500 + inspectOffset;
+      const baseY = height - 200 + bobOffset + reloadOffset;
+
+      const bodyGradient = ctx.createLinearGradient(baseX, baseY, baseX + 450, baseY + 40);
+      bodyGradient.addColorStop(0, '#0D4D0D');
+      bodyGradient.addColorStop(0.5, '#1A5C1A');
+      bodyGradient.addColorStop(1, '#0A3A0A');
+      ctx.fillStyle = bodyGradient;
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 20;
+      ctx.fillRect(baseX, baseY, 450, 40);
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = '#0A0A0A';
+      ctx.fillRect(baseX + 80, baseY - 30, 80, 100);
+
+      ctx.fillStyle = '#1A1A1A';
+      ctx.fillRect(baseX + 200, baseY - 60, 100, 40);
+      ctx.strokeStyle = '#FF0000';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(baseX + 250, baseY - 50);
+      ctx.lineTo(baseX + 250, baseY - 30);
+      ctx.moveTo(baseX + 240, baseY - 40);
+      ctx.lineTo(baseX + 260, baseY - 40);
+      ctx.stroke();
 
       ctx.fillStyle = '#8B4513';
       ctx.fillRect(baseX - 80, baseY + 5, 100, 30);
 
-      ctx.fillStyle = '#2C3E50';
-      ctx.fillRect(baseX + 100, baseY + 5, 30, 30);
+      if (shooting) {
+        const muzzleGradient = ctx.createRadialGradient(baseX + 450, baseY + 20, 0, baseX + 450, baseY + 20, 60);
+        muzzleGradient.addColorStop(0, '#FFFFFF');
+        muzzleGradient.addColorStop(0.2, '#FFD700');
+        muzzleGradient.addColorStop(0.5, '#FFA500');
+        muzzleGradient.addColorStop(1, 'rgba(255, 69, 0, 0)');
+        ctx.fillStyle = muzzleGradient;
+        ctx.shadowColor = '#FFA500';
+        ctx.shadowBlur = 40;
+        ctx.beginPath();
+        ctx.arc(baseX + 450, baseY + 20, 60, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    } else if (player.weapon === 'smg') {
+      const baseX = width - 350 + inspectOffset;
+      const baseY = height - 190 + bobOffset + reloadOffset;
 
-      ctx.fillStyle = '#555';
-      ctx.beginPath();
-      ctx.arc(baseX + 115, baseY - 40, 15, 0, Math.PI * 2);
-      ctx.fill();
+      const bodyGradient = ctx.createLinearGradient(baseX, baseY, baseX + 300, baseY + 45);
+      bodyGradient.addColorStop(0, '#1A1A1A');
+      bodyGradient.addColorStop(0.5, '#2C2C2C');
+      bodyGradient.addColorStop(1, '#0A0A0A');
+      ctx.fillStyle = bodyGradient;
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 12;
+      ctx.fillRect(baseX, baseY, 300, 45);
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = '#1A1A1A';
+      ctx.fillRect(baseX + 50, baseY - 15, 50, 60);
+
+      ctx.fillStyle = '#333';
+      ctx.fillRect(baseX + 100, baseY + 10, 25, 30);
+
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(baseX - 60, baseY + 10, 80, 25);
 
       if (shooting) {
-        const muzzleGradient = ctx.createRadialGradient(baseX + 350, baseY + 20, 5, baseX + 350, baseY + 20, 30);
+        const muzzleGradient = ctx.createRadialGradient(baseX + 300, baseY + 22, 0, baseX + 300, baseY + 22, 35);
         muzzleGradient.addColorStop(0, '#FFF');
         muzzleGradient.addColorStop(0.3, '#FFA500');
         muzzleGradient.addColorStop(1, 'rgba(255, 165, 0, 0)');
         ctx.fillStyle = muzzleGradient;
+        ctx.shadowColor = '#FFA500';
+        ctx.shadowBlur = 25;
         ctx.beginPath();
-        ctx.arc(baseX + 350, baseY + 20, 30, 0, Math.PI * 2);
+        ctx.arc(baseX + 300, baseY + 22, 35, 0, Math.PI * 2);
         ctx.fill();
+        ctx.shadowBlur = 0;
       }
-
-      ctx.strokeStyle = '#888';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(baseX, baseY, 350, 40);
     } else if (player.weapon === 'pistol') {
-      const baseX = width - 250 + inspectOffset;
+      const baseX = width - 280 + inspectOffset;
       const baseY = height - 180 + bobOffset + reloadOffset;
 
-      const gradient = ctx.createLinearGradient(baseX, baseY, baseX + 200, baseY + 35);
-      gradient.addColorStop(0, '#2C3E50');
-      gradient.addColorStop(1, '#34495E');
-      ctx.fillStyle = gradient;
+      const slideGradient = ctx.createLinearGradient(baseX, baseY, baseX + 220, baseY + 40);
+      slideGradient.addColorStop(0, '#1A1A1A');
+      slideGradient.addColorStop(0.5, '#2C3E50');
+      slideGradient.addColorStop(1, '#0A0A0A');
+      ctx.fillStyle = slideGradient;
       ctx.shadowColor = '#000';
-      ctx.shadowBlur = 8;
-      ctx.fillRect(baseX, baseY, 200, 35);
+      ctx.shadowBlur = 10;
+      ctx.fillRect(baseX, baseY, 220, 40);
       ctx.shadowBlur = 0;
 
-      ctx.fillStyle = '#1A1F2C';
-      ctx.fillRect(baseX - 30, baseY + 5, 50, 50);
+      ctx.fillStyle = '#0F1419';
+      ctx.fillRect(baseX - 35, baseY + 5, 55, 55);
 
       ctx.fillStyle = '#8B4513';
-      ctx.fillRect(baseX - 50, baseY + 15, 30, 30);
+      ctx.fillRect(baseX - 60, baseY + 15, 35, 35);
 
       ctx.fillStyle = '#F97316';
-      ctx.fillRect(baseX + 180, baseY + 10, 20, 15);
+      ctx.fillRect(baseX + 195, baseY + 12, 25, 16);
 
-      ctx.fillStyle = '#555';
-      ctx.fillRect(baseX + 60, baseY - 15, 40, 20);
+      ctx.fillStyle = '#444';
+      ctx.fillRect(baseX + 70, baseY - 18, 45, 22);
 
       if (shooting) {
-        const muzzleGradient = ctx.createRadialGradient(baseX + 200, baseY + 18, 3, baseX + 200, baseY + 18, 20);
+        const muzzleGradient = ctx.createRadialGradient(baseX + 220, baseY + 20, 0, baseX + 220, baseY + 20, 25);
         muzzleGradient.addColorStop(0, '#FFF');
         muzzleGradient.addColorStop(0.4, '#FFA500');
         muzzleGradient.addColorStop(1, 'rgba(255, 165, 0, 0)');
         ctx.fillStyle = muzzleGradient;
+        ctx.shadowColor = '#FFA500';
+        ctx.shadowBlur = 20;
         ctx.beginPath();
-        ctx.arc(baseX + 200, baseY + 18, 20, 0, Math.PI * 2);
+        ctx.arc(baseX + 220, baseY + 20, 25, 0, Math.PI * 2);
         ctx.fill();
+        ctx.shadowBlur = 0;
       }
 
-      ctx.strokeStyle = '#888';
+      ctx.strokeStyle = '#666';
       ctx.lineWidth = 2;
-      ctx.strokeRect(baseX, baseY, 200, 35);
+      ctx.strokeRect(baseX, baseY, 220, 40);
     } else if (player.weapon === 'knife') {
       const baseX = width - 200 + inspectOffset;
       const baseY = height - 150 + bobOffset;
@@ -539,33 +675,48 @@ const Index = () => {
       ctx.translate(baseX, baseY);
       ctx.rotate(rotation);
 
-      ctx.fillStyle = '#8B4513';
+      const handleGradient = ctx.createLinearGradient(-20, 0, 20, 120);
+      handleGradient.addColorStop(0, '#654321');
+      handleGradient.addColorStop(0.5, '#8B4513');
+      handleGradient.addColorStop(1, '#5C3317');
+      ctx.fillStyle = handleGradient;
       ctx.shadowColor = '#000';
-      ctx.shadowBlur = 5;
-      ctx.fillRect(-20, 0, 40, 120);
+      ctx.shadowBlur = 8;
+      ctx.fillRect(-22, 0, 44, 125);
       ctx.shadowBlur = 0;
 
-      const bladeGradient = ctx.createLinearGradient(-15, -100, 15, 0);
-      bladeGradient.addColorStop(0, '#E8E8E8');
+      for (let i = 0; i < 6; i++) {
+        ctx.fillStyle = '#3E2723';
+        ctx.fillRect(-22, i * 20, 44, 2);
+      }
+
+      const bladeGradient = ctx.createLinearGradient(-18, -120, 18, 0);
+      bladeGradient.addColorStop(0, '#F0F0F0');
+      bladeGradient.addColorStop(0.3, '#E0E0E0');
       bladeGradient.addColorStop(0.5, '#C0C0C0');
-      bladeGradient.addColorStop(1, '#A9A9A9');
+      bladeGradient.addColorStop(0.7, '#A9A9A9');
+      bladeGradient.addColorStop(1, '#909090');
       ctx.fillStyle = bladeGradient;
       ctx.beginPath();
-      ctx.moveTo(0, -100);
-      ctx.lineTo(-15, 0);
-      ctx.lineTo(15, 0);
+      ctx.moveTo(0, -120);
+      ctx.lineTo(-18, 0);
+      ctx.lineTo(18, 0);
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = '#D3D3D3';
-      ctx.fillRect(-3, -100, 6, 100);
+      const edgeGradient = ctx.createLinearGradient(-5, -120, 5, 0);
+      edgeGradient.addColorStop(0, '#FFFFFF');
+      edgeGradient.addColorStop(0.5, '#E8E8E8');
+      edgeGradient.addColorStop(1, '#D0D0D0');
+      ctx.fillStyle = edgeGradient;
+      ctx.fillRect(-5, -120, 10, 120);
 
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#404040';
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(0, -100);
-      ctx.lineTo(-15, 0);
-      ctx.lineTo(15, 0);
+      ctx.moveTo(0, -120);
+      ctx.lineTo(-18, 0);
+      ctx.lineTo(18, 0);
       ctx.closePath();
       ctx.stroke();
 
@@ -573,6 +724,20 @@ const Index = () => {
     }
 
     ctx.restore();
+  };
+
+  const buyWeapon = (weaponType: WeaponType) => {
+    const weapon = WEAPONS[weaponType];
+    if (player.money >= weapon.price) {
+      setPlayer((prev) => ({
+        ...prev,
+        weapon: weaponType,
+        ammo: weapon.ammo,
+        reserveAmmo: weapon.maxAmmo * 2,
+        money: prev.money - weapon.price,
+      }));
+      setBuyMenuOpen(false);
+    }
   };
 
   useEffect(() => {
@@ -583,23 +748,26 @@ const Index = () => {
     if (!ctx) return;
 
     const render = () => {
+      const quality = settings.graphicsQuality / 100;
+
       const skyGradient = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
-      skyGradient.addColorStop(0, '#87CEEB');
-      skyGradient.addColorStop(1, '#B0E0E6');
+      skyGradient.addColorStop(0, quality > 0.5 ? '#87CEEB' : '#6BB6D6');
+      skyGradient.addColorStop(1, quality > 0.5 ? '#B0E0E6' : '#95D0DB');
       ctx.fillStyle = skyGradient;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       const horizonY = canvas.height / 2 + player.pitch * 300 - recoil * 2;
       
       const groundGradient = ctx.createLinearGradient(0, horizonY, 0, canvas.height);
-      groundGradient.addColorStop(0, '#3A5F5F');
+      groundGradient.addColorStop(0, '#4A6F6F');
       groundGradient.addColorStop(0.5, '#2C3E50');
       groundGradient.addColorStop(1, '#1A1F2C');
       ctx.fillStyle = groundGradient;
       ctx.fillRect(0, horizonY, canvas.width, canvas.height - horizonY);
 
-      for (let x = -25; x <= 25; x += 2) {
-        for (let z = -25; z <= 25; z += 2) {
+      const gridStep = quality > 0.7 ? 2 : quality > 0.4 ? 3 : 4;
+      for (let x = -30; x <= 30; x += gridStep) {
+        for (let z = -30; z <= 30; z += gridStep) {
           const worldX = x - player.x;
           const worldZ = z - player.z;
 
@@ -620,25 +788,30 @@ const Index = () => {
             }
             ctx.fillRect(screenX - size / 2, screenY, size, size);
 
-            ctx.strokeStyle = `rgba(0, 0, 0, ${0.3 / rotatedZ})`;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(screenX - size / 2, screenY, size, size);
+            if (quality > 0.6) {
+              ctx.strokeStyle = `rgba(0, 0, 0, ${0.3 / rotatedZ})`;
+              ctx.lineWidth = 1;
+              ctx.strokeRect(screenX - size / 2, screenY, size, size);
+            }
           }
         }
       }
 
-      const walls = [
-        { x1: -25, z1: -25, x2: 25, z2: -25, color: '#7F8C8D' },
-        { x1: 25, z1: -25, x2: 25, z2: 25, color: '#95A5A6' },
-        { x1: 25, z1: 25, x2: -25, z2: 25, color: '#7F8C8D' },
-        { x1: -25, z1: 25, x2: -25, z2: -25, color: '#95A5A6' },
-        { x1: -10, z1: -10, x2: 10, z2: -10, color: '#6C7A89' },
-        { x1: 10, z1: -10, x2: 10, z2: 10, color: '#5D6D7E' },
-        { x1: -15, z1: 5, x2: -5, z2: 5, color: '#99754D' },
-        { x1: 15, z1: -5, x2: 20, z2: -5, color: '#99754D' },
+      const complexWalls = [
+        { x1: -30, z1: -30, x2: 30, z2: -30, h: 4, color: '#7F8C8D' },
+        { x1: 30, z1: -30, x2: 30, z2: 30, h: 4, color: '#95A5A6' },
+        { x1: 30, z1: 30, x2: -30, z2: 30, h: 4, color: '#7F8C8D' },
+        { x1: -30, z1: 30, x2: -30, z2: -30, h: 4, color: '#95A5A6' },
+        
+        { x1: -15, z1: -15, x2: 15, z2: -15, h: 3, color: '#6C7A89' },
+        { x1: 15, z1: -15, x2: 15, z2: 15, h: 3, color: '#5D6D7E' },
+        { x1: -20, z1: 10, x2: -10, z2: 10, h: 2.5, color: '#99754D' },
+        { x1: 20, z1: -10, x2: 25, z2: -10, h: 2.5, color: '#99754D' },
+        { x1: -5, z1: -25, x2: 5, z2: -25, h: 3.5, color: '#8B7D6B' },
+        { x1: -25, z1: 0, x2: -20, z2: 0, h: 6, color: '#A67C52' },
       ];
 
-      walls.forEach((wall) => {
+      complexWalls.forEach((wall) => {
         const x1 = wall.x1 - player.x;
         const z1 = wall.z1 - player.z;
         const x2 = wall.x2 - player.x;
@@ -651,16 +824,17 @@ const Index = () => {
 
         if (rz1 > 0.1 && rz2 > 0.1) {
           const sx1 = (rx1 / rz1) * 600 + canvas.width / 2;
-          const sy1Top = horizonY - ((3 - player.y + 1.7) / rz1) * 300;
+          const sy1Top = horizonY - ((wall.h - player.y + 1.7) / rz1) * 300;
           const sy1Bottom = horizonY + ((player.y - 1.7) / rz1) * 300;
 
           const sx2 = (rx2 / rz2) * 600 + canvas.width / 2;
-          const sy2Top = horizonY - ((3 - player.y + 1.7) / rz2) * 300;
+          const sy2Top = horizonY - ((wall.h - player.y + 1.7) / rz2) * 300;
           const sy2Bottom = horizonY + ((player.y - 1.7) / rz2) * 300;
 
           const wallGradient = ctx.createLinearGradient(sx1, sy1Top, sx1, sy1Bottom);
           wallGradient.addColorStop(0, wall.color);
-          wallGradient.addColorStop(1, `${wall.color}CC`);
+          wallGradient.addColorStop(0.5, `${wall.color}DD`);
+          wallGradient.addColorStop(1, `${wall.color}BB`);
           ctx.fillStyle = wallGradient;
           
           ctx.beginPath();
@@ -671,9 +845,11 @@ const Index = () => {
           ctx.closePath();
           ctx.fill();
 
-          ctx.strokeStyle = '#34495E';
-          ctx.lineWidth = 2;
-          ctx.stroke();
+          if (quality > 0.5) {
+            ctx.strokeStyle = '#34495E';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
         }
       });
 
@@ -688,7 +864,7 @@ const Index = () => {
 
         if (rotatedZ > 0.1) {
           const screenX = (rotatedX / rotatedZ) * 600 + canvas.width / 2;
-          const screenY = horizonY - ((0.3 + player.y - 1.7) / rotatedZ) * 300;
+          const screenY = horizonY - ((bot.y - player.y) / rotatedZ) * 300;
 
           const size = 150 / rotatedZ;
 
@@ -715,8 +891,10 @@ const Index = () => {
           bodyGradient.addColorStop(0.5, '#A0522D');
           bodyGradient.addColorStop(1, '#6B3410');
           ctx.fillStyle = bodyGradient;
-          ctx.shadowColor = '#000';
-          ctx.shadowBlur = 5;
+          if (quality > 0.6) {
+            ctx.shadowColor = '#000';
+            ctx.shadowBlur = 5;
+          }
           ctx.fillRect(screenX - size / 2, screenY - size * 2, size, size * 2);
           ctx.shadowBlur = 0;
 
@@ -771,8 +949,10 @@ const Index = () => {
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2 - recoil;
         
-        ctx.shadowColor = ctx.strokeStyle;
-        ctx.shadowBlur = 5;
+        if (quality > 0.5) {
+          ctx.shadowColor = ctx.strokeStyle;
+          ctx.shadowBlur = 5;
+        }
         
         ctx.beginPath();
         ctx.moveTo(centerX - 15, centerY);
@@ -792,6 +972,47 @@ const Index = () => {
         ctx.shadowBlur = 0;
       }
 
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(20, 20, 180, 180);
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(20, 20, 180, 180);
+
+      const radarCenterX = 110;
+      const radarCenterY = 110;
+      const radarScale = 3;
+
+      ctx.fillStyle = '#00FF00';
+      ctx.beginPath();
+      ctx.arc(radarCenterX, radarCenterY, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      bots.forEach((bot) => {
+        if (!bot.alive) return;
+        const dx = (bot.x - player.x) * radarScale;
+        const dz = (bot.z - player.z) * radarScale;
+        
+        const radarX = radarCenterX + dx;
+        const radarY = radarCenterY + dz;
+
+        if (radarX > 20 && radarX < 200 && radarY > 20 && radarY < 200) {
+          ctx.fillStyle = cheats.esp ? '#FF0000' : '#FF6666';
+          ctx.beginPath();
+          ctx.arc(radarX, radarY, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(radarCenterX, radarCenterY);
+      const lineLength = 15;
+      const lineX = radarCenterX + Math.sin(player.rotation) * lineLength;
+      const lineY = radarCenterY + Math.cos(player.rotation) * lineLength;
+      ctx.lineTo(lineX, lineY);
+      ctx.stroke();
+
       animationRef.current = requestAnimationFrame(render);
     };
 
@@ -802,14 +1023,17 @@ const Index = () => {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [gameState, player, bots, shooting, recoil, inspecting, inspectRotation, weaponBob, reloading, cheats]);
+  }, [gameState, player, bots, shooting, recoil, inspecting, inspectRotation, weaponBob, reloading, cheats, settings]);
 
   const startGame = () => {
-    if (selectedTeam) {
-      setPlayer((prev) => ({ ...prev, team: selectedTeam }));
-      setGameState('playing');
-      setKillCount(0);
-    }
+    setGameState('teamSelect');
+  };
+
+  const selectTeam = (team: Team) => {
+    setSelectedTeam(team);
+    setPlayer((prev) => ({ ...prev, team }));
+    setGameState('playing');
+    setKillCount(0);
   };
 
   const resetGame = () => {
@@ -822,10 +1046,11 @@ const Index = () => {
       rotation: 0,
       pitch: 0,
       health: 100,
-      ammo: 30,
+      ammo: 7,
       team: null,
-      weapon: 'rifle',
-      reserveAmmo: 90,
+      weapon: 'pistol',
+      reserveAmmo: 14,
+      money: 800,
     });
     setCheats({
       aimbot: false,
@@ -837,21 +1062,117 @@ const Index = () => {
 
   if (gameState === 'menu') {
     return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0A0A0A] via-[#1A0000] to-[#000000] flex items-center justify-center p-4">
+        <Card className="max-w-2xl w-full p-8 bg-black/90 border-[#FF0000] backdrop-blur">
+          <div className="text-center mb-8">
+            <h1 className="text-6xl font-bold text-[#FF0000] mb-2 tracking-wider drop-shadow-[0_0_20px_rgba(255,0,0,0.8)]">
+              TACTICAL OPS
+            </h1>
+            <p className="text-gray-400">Режим: Соревновательный</p>
+          </div>
+
+          <Button
+            onClick={startGame}
+            className="w-full py-6 text-2xl font-bold bg-[#00FF00] hover:bg-[#00DD00] text-black mb-4 shadow-[0_0_20px_rgba(0,255,0,0.5)]"
+          >
+            ИГРАТЬ
+          </Button>
+
+          <Button
+            onClick={() => setSettingsOpen(!settingsOpen)}
+            className="w-full py-4 text-xl font-bold bg-[#333] hover:bg-[#444] text-white mb-4"
+          >
+            <Icon name="Settings" size={24} className="mr-2" />
+            НАСТРОЙКИ
+          </Button>
+
+          {settingsOpen && (
+            <div className="p-6 bg-[#1A1A1A] rounded-lg border-2 border-[#333] mb-4">
+              <h3 className="text-white font-bold mb-4">Настройки</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-gray-300 text-sm mb-2 block flex items-center gap-2">
+                    <Icon name="MonitorPlay" size={16} />
+                    Качество графики: {settings.graphicsQuality}%
+                  </label>
+                  <Slider
+                    value={[settings.graphicsQuality]}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, graphicsQuality: value[0] }))}
+                    min={25}
+                    max={100}
+                    step={25}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-300 text-sm mb-2 block flex items-center gap-2">
+                    <Icon name="MousePointer" size={16} />
+                    Чувствительность мыши: {settings.sensitivity}%
+                  </label>
+                  <Slider
+                    value={[settings.sensitivity]}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, sensitivity: value[0] }))}
+                    min={10}
+                    max={100}
+                    step={10}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-300 text-sm mb-2 block flex items-center gap-2">
+                    <Icon name="Eye" size={16} />
+                    Поле зрения (FOV): {settings.fov}°
+                  </label>
+                  <Slider
+                    value={[settings.fov]}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, fov: value[0] }))}
+                    min={60}
+                    max={120}
+                    step={10}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="p-4 bg-[#0A0A0A] rounded-lg border border-[#333]">
+            <h4 className="text-[#FF0000] font-bold mb-2 flex items-center gap-2">
+              <Icon name="Info" size={20} />
+              Управление
+            </h4>
+            <div className="grid grid-cols-2 gap-2 text-sm text-gray-400">
+              <div>• WASD - движение</div>
+              <div>• Мышь - обзор</div>
+              <div>• ЛКМ - стрельба</div>
+              <div>• R - перезарядка</div>
+              <div>• Y - осмотр оружия</div>
+              <div>• 1/2/3 - смена оружия</div>
+              <div>• B - меню закупки</div>
+              <div>• Правый Shift - читы</div>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === 'teamSelect') {
+    return (
       <div className="min-h-screen bg-gradient-to-br from-[#1A1F2C] via-[#2C3E50] to-[#34495E] flex items-center justify-center p-4">
         <Card className="max-w-2xl w-full p-8 bg-[#2C3E50]/90 border-[#5D6D7E] backdrop-blur">
           <div className="text-center mb-8">
-            <h1 className="text-5xl font-bold text-white mb-2 tracking-wider">TACTICAL OPS</h1>
-            <p className="text-gray-300">Выберите команду</p>
+            <h1 className="text-4xl font-bold text-white mb-2">Выберите команду</h1>
+            <p className="text-gray-300">Раунд начнется после выбора</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-6 mb-8">
+          <div className="grid grid-cols-2 gap-6">
             <button
-              onClick={() => setSelectedTeam('CT')}
-              className={`p-8 rounded-lg border-2 transition-all ${
-                selectedTeam === 'CT'
-                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/20 scale-105'
-                  : 'border-[#5D6D7E] bg-[#34495E]/50 hover:border-[#0EA5E9]/50'
-              }`}
+              onClick={() => selectTeam('CT')}
+              className="p-8 rounded-lg border-2 border-[#0EA5E9] bg-[#0EA5E9]/20 hover:bg-[#0EA5E9]/30 hover:scale-105 transition-all"
             >
               <div className="text-6xl mb-4">🛡️</div>
               <h3 className="text-2xl font-bold text-white mb-2">Counter-Terrorists</h3>
@@ -859,41 +1180,13 @@ const Index = () => {
             </button>
 
             <button
-              onClick={() => setSelectedTeam('T')}
-              className={`p-8 rounded-lg border-2 transition-all ${
-                selectedTeam === 'T'
-                  ? 'border-[#F97316] bg-[#F97316]/20 scale-105'
-                  : 'border-[#5D6D7E] bg-[#34495E]/50 hover:border-[#F97316]/50'
-              }`}
+              onClick={() => selectTeam('T')}
+              className="p-8 rounded-lg border-2 border-[#F97316] bg-[#F97316]/20 hover:bg-[#F97316]/30 hover:scale-105 transition-all"
             >
               <div className="text-6xl mb-4">💣</div>
               <h3 className="text-2xl font-bold text-white mb-2">Terrorists</h3>
               <p className="text-gray-300 text-sm">Захватите объект</p>
             </button>
-          </div>
-
-          <Button
-            onClick={startGame}
-            disabled={!selectedTeam}
-            className="w-full py-6 text-xl font-bold bg-[#0EA5E9] hover:bg-[#0EA5E9]/80 text-white disabled:opacity-50"
-          >
-            Начать игру
-          </Button>
-
-          <div className="mt-6 p-4 bg-[#1A1F2C]/50 rounded-lg">
-            <h4 className="text-white font-bold mb-2 flex items-center gap-2">
-              <Icon name="Info" size={20} />
-              Управление
-            </h4>
-            <div className="grid grid-cols-2 gap-2 text-sm text-gray-300">
-              <div>• WASD - движение</div>
-              <div>• Мышь - обзор</div>
-              <div>• ЛКМ - стрельба</div>
-              <div>• R - перезарядка</div>
-              <div>• Y - осмотр оружия</div>
-              <div>• 1/2/3 - смена оружия</div>
-              <div>• Правый Shift - читы</div>
-            </div>
           </div>
         </Card>
       </div>
@@ -907,6 +1200,7 @@ const Index = () => {
           <div className="text-6xl mb-4">💀</div>
           <h2 className="text-4xl font-bold text-white mb-4">ВЫ УБИТЫ</h2>
           <p className="text-gray-300 mb-2">Убито врагов: {killCount}</p>
+          <p className="text-gray-300 mb-2">Заработано: ${killCount * 300}</p>
           <p className="text-gray-300 mb-6">Финальное здоровье: 0 HP</p>
           <Button onClick={resetGame} className="w-full py-4 text-lg bg-[#0EA5E9] hover:bg-[#0EA5E9]/80">
             Вернуться в меню
@@ -942,10 +1236,14 @@ const Index = () => {
           <Icon name="Skull" size={20} className="text-[#0EA5E9]" />
           <span className="font-bold">Убито: {killCount}</span>
         </div>
+        <div className="bg-black/70 text-[#00FF00] px-4 py-2 rounded-lg backdrop-blur flex items-center gap-2">
+          <Icon name="DollarSign" size={20} className="text-[#00FF00]" />
+          <span className="font-bold">${player.money}</span>
+        </div>
       </div>
 
       {cheatMenuOpen && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/90 border-2 border-[#00FF00] rounded-lg p-4 backdrop-blur">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/90 border-2 border-[#00FF00] rounded-lg p-4 backdrop-blur z-50">
           <h3 className="text-[#00FF00] font-bold mb-3 text-center flex items-center gap-2 justify-center">
             <Icon name="Terminal" size={20} />
             CHEAT MENU
@@ -996,6 +1294,101 @@ const Index = () => {
         </div>
       )}
 
+      {buyMenuOpen && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/95 border-2 border-[#FFD700] rounded-lg p-6 backdrop-blur z-50 min-w-[500px]">
+          <h3 className="text-[#FFD700] font-bold mb-4 text-2xl text-center flex items-center gap-2 justify-center">
+            <Icon name="ShoppingCart" size={24} />
+            МЕНЮ ЗАКУПКИ
+          </h3>
+          <p className="text-center text-[#00FF00] mb-4">Доступно: ${player.money}</p>
+          
+          <div className="space-y-3">
+            <button
+              onClick={() => buyWeapon('pistol')}
+              disabled={player.money < WEAPONS.pistol.price}
+              className={`w-full p-4 rounded-lg border-2 flex items-center justify-between ${
+                player.money >= WEAPONS.pistol.price
+                  ? 'border-[#00FF00] bg-[#00FF00]/10 hover:bg-[#00FF00]/20'
+                  : 'border-gray-600 bg-gray-800/50 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon name="Target" size={24} className="text-white" />
+                <div className="text-left">
+                  <div className="text-white font-bold">{WEAPONS.pistol.name}</div>
+                  <div className="text-sm text-gray-400">Урон: {WEAPONS.pistol.damage}</div>
+                </div>
+              </div>
+              <div className="text-[#FFD700] font-bold">${WEAPONS.pistol.price}</div>
+            </button>
+
+            <button
+              onClick={() => buyWeapon('smg')}
+              disabled={player.money < WEAPONS.smg.price}
+              className={`w-full p-4 rounded-lg border-2 flex items-center justify-between ${
+                player.money >= WEAPONS.smg.price
+                  ? 'border-[#00FF00] bg-[#00FF00]/10 hover:bg-[#00FF00]/20'
+                  : 'border-gray-600 bg-gray-800/50 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon name="Zap" size={24} className="text-white" />
+                <div className="text-left">
+                  <div className="text-white font-bold">{WEAPONS.smg.name}</div>
+                  <div className="text-sm text-gray-400">Урон: {WEAPONS.smg.damage}</div>
+                </div>
+              </div>
+              <div className="text-[#FFD700] font-bold">${WEAPONS.smg.price}</div>
+            </button>
+
+            <button
+              onClick={() => buyWeapon('rifle')}
+              disabled={player.money < WEAPONS.rifle.price}
+              className={`w-full p-4 rounded-lg border-2 flex items-center justify-between ${
+                player.money >= WEAPONS.rifle.price
+                  ? 'border-[#00FF00] bg-[#00FF00]/10 hover:bg-[#00FF00]/20'
+                  : 'border-gray-600 bg-gray-800/50 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon name="Crosshair" size={24} className="text-white" />
+                <div className="text-left">
+                  <div className="text-white font-bold">{WEAPONS.rifle.name}</div>
+                  <div className="text-sm text-gray-400">Урон: {WEAPONS.rifle.damage}</div>
+                </div>
+              </div>
+              <div className="text-[#FFD700] font-bold">${WEAPONS.rifle.price}</div>
+            </button>
+
+            <button
+              onClick={() => buyWeapon('awp')}
+              disabled={player.money < WEAPONS.awp.price}
+              className={`w-full p-4 rounded-lg border-2 flex items-center justify-between ${
+                player.money >= WEAPONS.awp.price
+                  ? 'border-[#00FF00] bg-[#00FF00]/10 hover:bg-[#00FF00]/20'
+                  : 'border-gray-600 bg-gray-800/50 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon name="Crosshair" size={24} className="text-[#FF0000]" />
+                <div className="text-left">
+                  <div className="text-white font-bold">{WEAPONS.awp.name}</div>
+                  <div className="text-sm text-gray-400">Урон: {WEAPONS.awp.damage} (снайпер)</div>
+                </div>
+              </div>
+              <div className="text-[#FFD700] font-bold">${WEAPONS.awp.price}</div>
+            </button>
+          </div>
+
+          <button
+            onClick={() => setBuyMenuOpen(false)}
+            className="w-full mt-4 p-3 bg-[#ea384c] hover:bg-[#d12d3f] text-white rounded-lg font-bold"
+          >
+            Закрыть (B)
+          </button>
+        </div>
+      )}
+
       <div className="absolute top-4 right-4">
         <div
           className={`px-4 py-2 rounded-lg backdrop-blur font-bold ${
@@ -1016,7 +1409,7 @@ const Index = () => {
       )}
 
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-6 py-3 rounded-lg backdrop-blur">
-        <p className="text-sm">Кликните для захвата курсора | ESC для выхода</p>
+        <p className="text-sm">Кликните для захвата курсора | B - закупка | ESC для выхода</p>
       </div>
 
       <button
